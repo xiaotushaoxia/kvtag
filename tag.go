@@ -7,6 +7,11 @@ import (
 	"sync"
 )
 
+const embeddedFlag1 = "embedded"
+
+// gopkg.in/yaml use inline as flag
+const embeddedFlag2 = "inline"
+
 var tagCache sync.Map
 var onceMap sync.Map
 
@@ -14,16 +19,10 @@ type TagInfo struct {
 	Type      reflect.Type
 	fieldTags []*FieldTag
 	nmap      map[string]*FieldTag
-	imap      map[int]*FieldTag
 }
 
 func (ti *TagInfo) GetFieldTagByName(name string) (*FieldTag, bool) {
 	v, ok := ti.nmap[name]
-	return v, ok
-}
-
-func (ti *TagInfo) GetFieldTagByIndex(i int) (*FieldTag, bool) {
-	v, ok := ti.imap[i]
 	return v, ok
 }
 
@@ -32,7 +31,6 @@ func (ti *TagInfo) FieldTags() []*FieldTag {
 }
 
 type FieldTag struct {
-	FieldIndex int
 	FieldName  string
 	TagSetting map[string]string
 }
@@ -53,32 +51,40 @@ func ParserTag(obj any, tagName string, sep string) *TagInfo {
 }
 
 func parserTag(t reflect.Type, tagName string, sep string) *TagInfo {
-	v := &TagInfo{Type: t}
-	fts := make([]*FieldTag, 0)
-	nmap := map[string]*FieldTag{}
-	imap := map[int]*FieldTag{}
+	v := &TagInfo{Type: t, fieldTags: make([]*FieldTag, 0), nmap: map[string]*FieldTag{}}
+	_parserTag(t, tagName, sep, v)
+	return v
+}
+
+func _parserTag(t reflect.Type, tagName, sep string, result *TagInfo) {
+	var embeddedFields []reflect.StructField
 	for i := 0; i < t.NumField(); i++ {
 		fieldStruct := t.Field(i)
-		if !ast.IsExported(fieldStruct.Name) {
-			continue
-		}
 		s := fieldStruct.Tag.Get(tagName)
 		if s == "" {
 			continue
 		}
+		if s == embeddedFlag1 || s == embeddedFlag2 {
+			embeddedFields = append(embeddedFields, fieldStruct)
+			continue
+		}
+		if !ast.IsExported(fieldStruct.Name) {
+			continue
+		}
+		_, existed := result.nmap[fieldStruct.Name]
+		if existed {
+			continue
+		}
 		ft := &FieldTag{
-			FieldIndex: i,
 			FieldName:  fieldStruct.Name,
 			TagSetting: parseTagSetting(s, sep),
 		}
-		fts = append(fts, ft)
-		imap[i] = ft
-		nmap[fieldStruct.Name] = ft
+		result.fieldTags = append(result.fieldTags, ft)
+		result.nmap[fieldStruct.Name] = ft
 	}
-	v.fieldTags = fts
-	v.nmap = nmap
-	v.imap = imap
-	return v
+	for _, s := range embeddedFields {
+		_parserTag(s.Type, tagName, sep, result)
+	}
 }
 
 func parseTagSetting(str string, sep string) map[string]string {
